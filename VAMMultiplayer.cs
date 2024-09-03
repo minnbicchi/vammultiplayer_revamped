@@ -20,6 +20,12 @@ namespace vamrobotics
 {
     class VAMMultiplayer : MVRScript
     {
+        // PROTOCOL VERSION - UPDATE THIS WHEN CHANGING THE PROTOCOL
+        byte majorVersion = 1;
+        byte minorVersion = 0;
+        byte patchVersion = 0;
+
+        string sceneVarName = "";
         private Socket client;
         // timestamps of when we sent requests
         // used also to track requests in flight
@@ -64,46 +70,14 @@ namespace vamrobotics
         protected JSONStorableStringChooser playerChooser;
         protected JSONStorableStringChooser serverChooser;
         protected JSONStorableStringChooser portChooser;
-        protected JSONStorableStringChooser protocolChooser;
         protected JSONStorableStringChooser updateFrequencyChooser;
         protected JSONStorableBool spectatorModeBool;
-        protected JSONStorableBool positionsBool;
-        protected JSONStorableBool rotationsBool;
-        protected JSONStorableBool controlBool;
-        protected JSONStorableBool hipControlBool;
-        protected JSONStorableBool pelvisControlBool;
-        protected JSONStorableBool chestControlBool;
-        protected JSONStorableBool headControlBool;
-        protected JSONStorableBool rHandControlBool;
-        protected JSONStorableBool lHandControlBool;
-        protected JSONStorableBool rFootControlBool;
-        protected JSONStorableBool lFootControlBool;
-        protected JSONStorableBool neckControlBool;
-        protected JSONStorableBool eyeTargetControlBool;
-        protected JSONStorableBool rNippleControlBool;
-        protected JSONStorableBool lNippleControlBool;
-        protected JSONStorableBool testesControlBool;
-        protected JSONStorableBool penisBaseControlBool;
-        protected JSONStorableBool penisMidControlBool;
-        protected JSONStorableBool penisTipControlBool;
-        protected JSONStorableBool rElbowControlBool;
-        protected JSONStorableBool lElbowControlBool;
-        protected JSONStorableBool rKneeControlBool;
-        protected JSONStorableBool lKneeControlBool;
-        protected JSONStorableBool rToeControlBool;
-        protected JSONStorableBool lToeControlBool;
-        protected JSONStorableBool abdomenControlBool;
-        protected JSONStorableBool abdomen2ControlBool;
-        protected JSONStorableBool rThighControlBool;
-        protected JSONStorableBool lThighControlBool;
-        protected JSONStorableBool rArmControlBool;
-        protected JSONStorableBool lArmControlBool;
-        protected JSONStorableBool rShoulderControlBool;
-        protected JSONStorableBool lShoulderControlBool;
         protected UIDynamicButton connectToServer;
         protected UIDynamicButton disconnectFromServer;
         protected UIDynamicButton checkAll;
         protected UIDynamicButton unCheckAll;
+        protected JSONStorableString playerCount;
+        protected UIDynamicTextField playerCountTextField;
         protected JSONStorableString diagnostics;
         protected UIDynamicTextField diagnosticsTextField;
         protected JSONStorableString instructions;
@@ -114,14 +88,15 @@ namespace vamrobotics
         private List<string> onlinePlayers;
         private List<Player> players;
         private string lastSentClothesUpdate = ""; //copy of last sent clothes update for current player
+        private bool firstResponseAfterConnecting = true;
 
-            private static string[] shortTargetNames = new string[] {
+        private static string[] shortTargetNames = new string[] {
         "c", "Hc", "pc", "cc", "hc", "rh", "lh", "rf", "lf", "nc", "et", "rn", "ln",
         "tc", "pb", "pm", "pt", "re", "le", "rk", "lk", "Rt", "Lt", "ac", "a2",
         "rt", "lt", "ra", "la", "rs", "ls"
-            };
+        };
 
-            private static string[] longTargetNames = new string[] {
+        private static string[] longTargetNames = new string[] {
                 "control", "hipControl", "pelvisControl", "chestControl", "headControl",
                 "rHandControl", "lHandControl", "rFootControl", "lFootControl", "neckControl",
                 "eyeTargetControl", "rNippleControl", "lNippleControl", "testesControl",
@@ -129,13 +104,16 @@ namespace vamrobotics
                 "lElbowControl", "rKneeControl", "lKneeControl", "rToeControl", "lToeControl",
                 "abdomenControl", "abdomen2Control", "rThighControl", "lThighControl",
                 "rArmControl", "lArmControl", "rShoulderControl", "lShoulderControl"
-            };
+        };
 
         public override void Init()
         {
             try
             {
                 pluginLabelJSON.val = "VAM Multiplayer v1.0";
+
+                // Get var name of currently loaded scene
+                sceneVarName = GetCurrentSceneVarName();
 
                 // Find all 'Person' Atoms currently in the scene
                 Atom tempAtom;
@@ -185,16 +163,16 @@ namespace vamrobotics
                         //public void SetActiveClothingItem(DAZClothingItem item, bool active, bool fromRestore = false)
                         //public void SetActiveClothingItem(string itemId, bool active, bool fromRestore = false)
                         tempPlayer.activeClothesUids = tempPlayer.geometry.clothingItems.Where(c => c.isActiveAndEnabled).Select(c => c.uid).ToList();
-                        SuperController.LogMessage("ATOM UID: " + atomUID + "\n");
-                        foreach (string uid in tempPlayer.activeClothesUids)
-                        {
-                            SuperController.LogMessage(uid);
-                        }
-                        SuperController.LogMessage("\n");
+                        //SuperController.LogMessage("ATOM UID: " + atomUID + "\n");
+                       // foreach (string uid in tempPlayer.activeClothesUids)
+                       // {
+                       //     SuperController.LogMessage(uid);
+                       // }
+                        //SuperController.LogMessage("\n");
                         players.Add(tempPlayer);
                     }
                 }
-                SuperController.LogMessage("Done displaying init clothing info.\n");
+                //SuperController.LogMessage("Done displaying init clothing info.\n");
 
                 // Setup player selector
                 playerChooser = new JSONStorableStringChooser("Player Chooser", playerList, null, "Select Player", PlayerChooserCallback);
@@ -239,14 +217,6 @@ namespace vamrobotics
                 RegisterStringChooser(portChooser);
                 CreatePopup(portChooser, true);
 
-                // Setup network protocol selector
-                List<string> protocols = new List<string>();
-                //protocols.Add("UDP");
-                protocols.Add("TCP");
-                protocolChooser = new JSONStorableStringChooser("Protocol Chooser", protocols, protocols[0], "Select Net Protocol", ProtocolChooserCallback);
-                RegisterStringChooser(protocolChooser);
-                CreatePopup(protocolChooser, true);
-
                 // Spectator mode toggle
                 spectatorModeBool = new JSONStorableBool("Spectator Mode", false);
                 CreateToggle(spectatorModeBool);
@@ -259,100 +229,25 @@ namespace vamrobotics
                 disconnectFromServer = CreateButton("Disconnect from server", true);
                 disconnectFromServer.button.onClick.AddListener(DisconnectFromServerCallback);
 
+                // Setup a text field for player count
+                playerCount = new JSONStorableString("Player count", "Player count: ");
+                playerCountTextField = CreateTextField(playerCount, true);
+                playerCountTextField.height = 0;
+                playerCountTextField.UItext.fontSize = 40;
+
                 // Setup a text field for diagnostics
                 diagnostics = new JSONStorableString("Diagnostics", "Diagnostics:\n");
                 diagnosticsTextField = CreateTextField(diagnostics, true);
                 diagnosticsTextField.height = 600f;
-
-                // Setup positions and rotations bools
-                positionsBool = new JSONStorableBool("Update Positions", true);
-                CreateToggle(positionsBool);
-                rotationsBool = new JSONStorableBool("Update Rotations", true);
-                CreateToggle(rotationsBool);
-
-                // Setup a text fields for targets
-                UIDynamicTextField targetsTextField = CreateTextField(new JSONStorableString("Targets1", "Select Updateable Targets Below:"));
-                targetsTextField.height = 40;
-                targetsTextField.UItext.fontSize = 40;
-
-                // Setup uncheck and check all buttons
-                unCheckAll = CreateButton("Uncheck All");
-                unCheckAll.button.onClick.AddListener(UncheckAllCallback);
-                checkAll = CreateButton("Check All");
-                checkAll.button.onClick.AddListener(CheckAllCallback);
-
-                // Setup player's target bools
-                controlBool = new JSONStorableBool("control", true);
-                CreateToggle(controlBool);
-                hipControlBool = new JSONStorableBool("hipControl", true);
-                CreateToggle(hipControlBool);
-                pelvisControlBool = new JSONStorableBool("pelvisControl", true);
-                CreateToggle(pelvisControlBool);
-                chestControlBool = new JSONStorableBool("chestControl", true);
-                CreateToggle(chestControlBool);
-                headControlBool = new JSONStorableBool("headControl", true);
-                CreateToggle(headControlBool);
-                rHandControlBool = new JSONStorableBool("rHandControl", true);
-                CreateToggle(rHandControlBool);
-                lHandControlBool = new JSONStorableBool("lHandControl", true);
-                CreateToggle(lHandControlBool);
-                rFootControlBool = new JSONStorableBool("rFootControl", true);
-                CreateToggle(rFootControlBool);
-                lFootControlBool = new JSONStorableBool("lFootControl", true);
-                CreateToggle(lFootControlBool);
-                neckControlBool = new JSONStorableBool("neckControl", false);
-                CreateToggle(neckControlBool);
-                eyeTargetControlBool = new JSONStorableBool("eyeTargetControl", false);
-                CreateToggle(eyeTargetControlBool);
-                rNippleControlBool = new JSONStorableBool("rNippleControl", false);
-                CreateToggle(rNippleControlBool);
-                lNippleControlBool = new JSONStorableBool("lNippleControl", false);
-                CreateToggle(lNippleControlBool);
-                testesControlBool = new JSONStorableBool("testesControl", false);
-                CreateToggle(testesControlBool);
-                penisBaseControlBool = new JSONStorableBool("penisBaseControl", false);
-                CreateToggle(penisBaseControlBool);
-                penisMidControlBool = new JSONStorableBool("penisMidControl", false);
-                CreateToggle(penisMidControlBool);
-                penisTipControlBool = new JSONStorableBool("penisTipControl", false);
-                CreateToggle(penisTipControlBool);
-                rElbowControlBool = new JSONStorableBool("rElbowControl", true);
-                CreateToggle(rElbowControlBool);
-                lElbowControlBool = new JSONStorableBool("lElbowControl", true);
-                CreateToggle(lElbowControlBool);
-                rKneeControlBool = new JSONStorableBool("rKneeControl", true);
-                CreateToggle(rKneeControlBool);
-                lKneeControlBool = new JSONStorableBool("lKneeControl", true);
-                CreateToggle(lKneeControlBool);
-                rToeControlBool = new JSONStorableBool("rToeControl", false);
-                CreateToggle(rToeControlBool);
-                lToeControlBool = new JSONStorableBool("lToeControl", false);
-                CreateToggle(lToeControlBool);
-                abdomenControlBool = new JSONStorableBool("abdomenControl", false);
-                CreateToggle(abdomenControlBool);
-                abdomen2ControlBool = new JSONStorableBool("abdomen2Control", false);
-                CreateToggle(abdomen2ControlBool);
-                rThighControlBool = new JSONStorableBool("rThighControl", true);
-                CreateToggle(rThighControlBool);
-                lThighControlBool = new JSONStorableBool("lThighControl", true);
-                CreateToggle(lThighControlBool);
-                rArmControlBool = new JSONStorableBool("rArmControl", true);
-                CreateToggle(rArmControlBool);
-                lArmControlBool = new JSONStorableBool("lArmControl", true);
-                CreateToggle(lArmControlBool);
-                rShoulderControlBool = new JSONStorableBool("rShoulderControl", false);
-                CreateToggle(rShoulderControlBool);
-                lShoulderControlBool = new JSONStorableBool("lShoulderControl", false);
-                CreateToggle(lShoulderControlBool);
 
                 string instructionsStr = @"
 1. Select a Player to control or choose Spectator mode to watch.
 2. Ensure the port (8888 or 9999) matches the room you want to join.
 3. Click 'Connect to server', it may take a few seconds.
 4. Check player status in the plugin window or via the Discord bot.
-5. If disconnected immediately, register your IP with the Discord bot. Registrations last 24h.
+5. If disconnected immediately, register your IP with the Discord bot. Registrations last 1 week.
 6. You also get disconnected if selected Player is already controlled. Select a different one and reconnect.
-7. Avoid changing Update Frequency or Updateable Targets. If FPS drops severely after connecting, try switching to 15Hz Frequency.
+7. Avoid changing Update Frequency.
 
 Tips:
 - If you encounter issues, click Disconnect and Connect again.
@@ -362,7 +257,7 @@ Scenes:
 - All players in the same room must use the same scene and atoms.
 - Scene modifications on your end won’t sync with others.
 Syncing:
-- Only Player joints are synced; moving other elements like sex toys or UI changes are local and not visible to others.";
+- Only Player joints and clothing on/off are synced; moving other elements like sex toys or UI changes are local and not visible to others.";
 
                 instructions = new JSONStorableString("Instructions", "Instructions:\n");
                 instructionsTextField = CreateTextField(instructions, true);
@@ -445,15 +340,8 @@ Syncing:
                                     batchedMessage.Append($"{shortTargetName},{targetObject.transform.position.x},{targetObject.transform.position.y},{targetObject.transform.position.z},{targetObject.transform.rotation.w},{targetObject.transform.rotation.x},{targetObject.transform.rotation.y},{targetObject.transform.rotation.z};");
 
                                     // Update the 'Old' position and rotation data
-                                    if (positionsBool.val)
-                                    {
                                     target.positionOld = targetObject.transform.position;
-                                    }
-
-                                    if (rotationsBool.val)
-                                    {
                                     target.rotationOld = targetObject.transform.rotation;
-                                    }
                                 }
                                 } else {
                                     ;//SuperController.LogError("TARGETOBJECT NULL 302");
@@ -614,6 +502,7 @@ Syncing:
                         {
                             SuperController.LogError("SocketException caught: " + ex.Message);
                             diagnosticsTextField.text += "sendfailed Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?\n";
+                            SuperController.AlertUser("Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?", null);
                             client.Close();
                             client = null;
                             ClearState();
@@ -660,6 +549,7 @@ Syncing:
                                         {
                                             SuperController.LogError("receive socket error! server disconnected");
                                             diagnosticsTextField.text += "receivefail Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?\n";
+                                            SuperController.AlertUser("Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?", null);
                                             client.Close();
                                             client = null;
                                             ClearState();
@@ -669,6 +559,7 @@ Syncing:
                                 {
                                         SuperController.LogError("receive socket error! disconnected");
                                         diagnosticsTextField.text += "receivefail Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?\n";
+                                        SuperController.AlertUser("Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?", null);
                                         client.Close();
                                         client = null;
                                         ClearState();
@@ -702,6 +593,7 @@ Syncing:
                     SuperController.LogError("Receive Exception SocketException caught: " + ex.Message);
                     diagnosticsTextField.text += "\n" + "socketerrorcode on receive="  + ex.SocketErrorCode + "\n";
                     diagnosticsTextField.text += "receivefail Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?\n";
+                    SuperController.AlertUser("Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?", null);
                     client.Close();
                     client = null;
                     ClearState();
@@ -715,6 +607,7 @@ Syncing:
             {
                 SuperController.LogError("Receive error - exception: " + ex.Message);
                 diagnosticsTextField.text += "receivefail general Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?\n";
+                SuperController.AlertUser("Error: server disconnected. Try to re-register via Discord bot. Or did you try controlling an already controlled look?", null);
                 client.Close();
                 client = null;
                 ClearState();
@@ -1003,11 +896,6 @@ Syncing:
                             {
                                 latestOnlinePlayers.Add(targetData[0]);
                             }
-                            if (!onlinePlayers.Contains(targetData[0]))
-                            {
-                                onlinePlayers.Add(targetData[0]);
-                                diagnosticsTextField.text += targetData[0] + " joined." + "\n";
-                            }
                             Atom otherPlayerAtom = SuperController.singleton.GetAtomByUid(targetData[0]);
                             if (targetData[1] == "CLOTHES")
                             {
@@ -1029,26 +917,19 @@ Syncing:
 
                             if (targetObject != null)
                             {
-                                if (positionsBool.val)
-                                {
-                                    Vector3 tempPosition = targetObject.transform.position;
-                                    tempPosition.x = float.Parse(targetData[2]);
-                                    tempPosition.y = float.Parse(targetData[3]);
-                                    tempPosition.z = float.Parse(targetData[4]);
+                                Vector3 tempPosition = targetObject.transform.position;
+                                tempPosition.x = float.Parse(targetData[2]);
+                                tempPosition.y = float.Parse(targetData[3]);
+                                tempPosition.z = float.Parse(targetData[4]);
 
-                                    targetObject.transform.position = tempPosition;
-                                }
+                                targetObject.transform.position = tempPosition;
+                                Quaternion tempRotation = targetObject.transform.rotation;
+                                tempRotation.w = float.Parse(targetData[5]);
+                                tempRotation.x = float.Parse(targetData[6]);
+                                tempRotation.y = float.Parse(targetData[7]);
+                                tempRotation.z = float.Parse(targetData[8]);
 
-                                if (rotationsBool.val)
-                                {
-                                    Quaternion tempRotation = targetObject.transform.rotation;
-                                    tempRotation.w = float.Parse(targetData[5]);
-                                    tempRotation.x = float.Parse(targetData[6]);
-                                    tempRotation.y = float.Parse(targetData[7]);
-                                    tempRotation.z = float.Parse(targetData[8]);
-
-                                    targetObject.transform.rotation = tempRotation;
-                                }
+                                targetObject.transform.rotation = tempRotation;
                             }
                             else {
                                 ;//SuperController.LogError("TARGET OBJECT NULL");
@@ -1061,13 +942,55 @@ Syncing:
                             ;//SuperController.LogError("NONE RESPONSE");
                     }
                 }
-                // Check if anyone disconnected since last tick
+                bool playerCountChanged = false;
+                // Show alert only if someone joins/disconnects during play
+                bool shouldShowAlert;
+                if (firstResponseAfterConnecting)
+                {
+                    shouldShowAlert = false;
+                    firstResponseAfterConnecting = false;
+                }
+                else
+                {
+                    shouldShowAlert = true;
+                }
+
+                // Check if anyone joined since last response
+                foreach (string player in latestOnlinePlayers)
+                {
+                    if (!onlinePlayers.Contains(player))
+                    {
+                        playerCountChanged = true;
+                        diagnosticsTextField.text += player + " joined." + "\n";
+                        if (shouldShowAlert)
+                        {
+                            SuperController.AlertUser(player + " joined.\nEnable their atom if not enabled already!", null);
+                        }
+                    }
+                }
+                // Check if anyone disconnected since last response
                 foreach (string player in onlinePlayers)
                 {
                     if (!latestOnlinePlayers.Contains(player))
                     {
+                        playerCountChanged = true;
                         diagnosticsTextField.text += player + " disconnected." + "\n";
+                        if (shouldShowAlert)
+                        {
+                            SuperController.AlertUser(player + " disconnected.", null);
+                        }
                     }
+                }
+                if (playerCountChanged || playerCountTextField.text == "Player count: ")
+                {
+                    // Update player count in UI
+                    int playerCountIncludingPlayer = latestOnlinePlayers.Count + 1;
+                    if (playerCountTextField.text == "Player count: " && playerCountIncludingPlayer == 1)
+                    {
+                       // First time connecting - display message if server empty
+                        diagnosticsTextField.text += "Server empty." + "\n";
+                    }
+                    playerCountTextField.text = "Player count: " + playerCountIncludingPlayer.ToString();
                 }
                 onlinePlayers.Clear();
                 onlinePlayers.AddRange(latestOnlinePlayers);
@@ -1227,211 +1150,51 @@ Syncing:
 
         protected bool CheckIfTargetIsUpdateable(string targetName)
         {
-            if (targetName == "control")
+            switch (targetName)
             {
-                return controlBool.val;
-            }
-            else if (targetName == "hipControl")
-            {
-                return hipControlBool.val;
-            }
-            else if (targetName == "pelvisControl")
-            {
-                return pelvisControlBool.val;
-            }
-            else if (targetName == "chestControl")
-            {
-                return chestControlBool.val;
-            }
-            else if (targetName == "headControl")
-            {
-                return headControlBool.val;
-            }
-            else if (targetName == "rHandControl")
-            {
-                return rHandControlBool.val;
-            }
-            else if (targetName == "lHandControl")
-            {
-                return lHandControlBool.val;
-            }
-            else if (targetName == "rFootControl")
-            {
-                return rFootControlBool.val;
-            }
-            else if (targetName == "lFootControl")
-            {
-                return lFootControlBool.val;
-            }
-            else if (targetName == "neckControl")
-            {
-                return neckControlBool.val;
-            }
-            else if (targetName == "eyeTargetControl")
-            {
-                return eyeTargetControlBool.val;
-            }
-            else if (targetName == "rNippleControl")
-            {
-                return rNippleControlBool.val;
-            }
-            else if (targetName == "lNippleControl")
-            {
-                return lNippleControlBool.val;
-            }
-            else if (targetName == "testesControl")
-            {
-                return testesControlBool.val;
-            }
-            else if (targetName == "penisBaseControl")
-            {
-                return penisBaseControlBool.val;
-            }
-            else if (targetName == "penisMidControl")
-            {
-                return penisMidControlBool.val;
-            }
-            else if (targetName == "penisTipControl")
-            {
-                return penisTipControlBool.val;
-            }
-            else if (targetName == "rElbowControl")
-            {
-                return rElbowControlBool.val;
-            }
-            else if (targetName == "lElbowControl")
-            {
-                return lElbowControlBool.val;
-            }
-            else if (targetName == "rKneeControl")
-            {
-                return rKneeControlBool.val;
-            }
-            else if (targetName == "lKneeControl")
-            {
-                return lKneeControlBool.val;
-            }
-            else if (targetName == "rToeControl")
-            {
-                return rToeControlBool.val;
-            }
-            else if (targetName == "lToeControl")
-            {
-                return lToeControlBool.val;
-            }
-            else if (targetName == "abdomenControl")
-            {
-                return abdomenControlBool.val;
-            }
-            else if (targetName == "abdomen2Control")
-            {
-                return abdomen2ControlBool.val;
-            }
-            else if (targetName == "rThighControl")
-            {
-                return rThighControlBool.val;
-            }
-            else if (targetName == "lThighControl")
-            {
-                return lThighControlBool.val;
-            }
-            else if (targetName == "rArmControl")
-            {
-                return rArmControlBool.val;
-            }
-            else if (targetName == "lArmControl")
-            {
-                return lArmControlBool.val;
-            }
-            else if (targetName == "rShoulderControl")
-            {
-                return rShoulderControlBool.val;
-            }
-            else if (targetName == "lShoulderControl")
-            {
-                return lShoulderControlBool.val;
-            }
+                case "control":
+                case "hipControl":
+                case "pelvisControl":
+                case "chestControl":
+                case "headControl":
+                case "rHandControl":
+                case "lHandControl":
+                case "rFootControl":
+                case "lFootControl":
+                case "rElbowControl":
+                case "lElbowControl":
+                case "rKneeControl":
+                case "lKneeControl":
+                case "rThighControl":
+                case "lThighControl":
+                case "rArmControl":
+                case "lArmControl":
+                    return true;
 
-            return false;
+                case "neckControl":
+                case "eyeTargetControl":
+                case "rNippleControl":
+                case "lNippleControl":
+                case "testesControl":
+                case "penisBaseControl":
+                case "penisMidControl":
+                case "penisTipControl":
+                case "rToeControl":
+                case "lToeControl":
+                case "abdomenControl":
+                case "abdomen2Control":
+                case "rShoulderControl":
+                case "lShoulderControl":
+                    return false;
+
+                default:
+                    return false;
+            }
         }
 
         protected void UpdateFrequencyChooserCallback(string updateFrequency)
         {
             SuperController.LogMessage("Update frequency " + updateFrequency + " selected.");
-        }
-
-        protected void UncheckAllCallback()
-        {
-            controlBool.SetVal(false);
-            hipControlBool.SetVal(false);
-            pelvisControlBool.SetVal(false);
-            chestControlBool.SetVal(false);
-            headControlBool.SetVal(false);
-            rHandControlBool.SetVal(false);
-            lHandControlBool.SetVal(false);
-            rFootControlBool.SetVal(false);
-            lFootControlBool.SetVal(false);
-            neckControlBool.SetVal(false);
-            eyeTargetControlBool.SetVal(false);
-            rNippleControlBool.SetVal(false);
-            lNippleControlBool.SetVal(false);
-            testesControlBool.SetVal(false);
-            penisBaseControlBool.SetVal(false);
-            penisMidControlBool.SetVal(false);
-            penisTipControlBool.SetVal(false);
-            rElbowControlBool.SetVal(false);
-            lElbowControlBool.SetVal(false);
-            rKneeControlBool.SetVal(false);
-            lKneeControlBool.SetVal(false);
-            rToeControlBool.SetVal(false);
-            lToeControlBool.SetVal(false);
-            abdomenControlBool.SetVal(false);
-            abdomen2ControlBool.SetVal(false);
-            rThighControlBool.SetVal(false);
-            lThighControlBool.SetVal(false);
-            rArmControlBool.SetVal(false);
-            lArmControlBool.SetVal(false);
-            rShoulderControlBool.SetVal(false);
-            lShoulderControlBool.SetVal(false);
-
-            SuperController.LogMessage("All targets unchecked.");
-        }
-
-        protected void CheckAllCallback()
-        {
-            controlBool.SetVal(true);
-            hipControlBool.SetVal(true);
-            pelvisControlBool.SetVal(true);
-            chestControlBool.SetVal(true);
-            headControlBool.SetVal(true);
-            rHandControlBool.SetVal(true);
-            lHandControlBool.SetVal(true);
-            rFootControlBool.SetVal(true);
-            lFootControlBool.SetVal(true);
-            neckControlBool.SetVal(true);
-            eyeTargetControlBool.SetVal(true);
-            rNippleControlBool.SetVal(true);
-            lNippleControlBool.SetVal(true);
-            testesControlBool.SetVal(true);
-            penisBaseControlBool.SetVal(true);
-            penisMidControlBool.SetVal(true);
-            penisTipControlBool.SetVal(true);
-            rElbowControlBool.SetVal(true);
-            lElbowControlBool.SetVal(true);
-            rKneeControlBool.SetVal(true);
-            lKneeControlBool.SetVal(true);
-            rToeControlBool.SetVal(true);
-            lToeControlBool.SetVal(true);
-            abdomenControlBool.SetVal(true);
-            abdomen2ControlBool.SetVal(true);
-            rThighControlBool.SetVal(true);
-            lThighControlBool.SetVal(true);
-            rArmControlBool.SetVal(true);
-            lArmControlBool.SetVal(true);
-            rShoulderControlBool.SetVal(true);
-            lShoulderControlBool.SetVal(true);
-
-            SuperController.LogMessage("All targets checked.");
         }
 
         protected void PlayerChooserCallback(string player)
@@ -1454,6 +1217,78 @@ Syncing:
             SuperController.LogMessage("Protocol " + protocol + " selected.");
         }
 
+        protected string GetCurrentSceneVarName()
+        {
+            var sceneDir = SuperController.singleton.currentLoadDir;
+            var _sceneVar = sceneDir;
+            if (sceneDir.Contains(":"))
+            {
+                var sceneDirSplit = sceneDir.Split(':');
+                _sceneVar = sceneDirSplit[0];
+            }
+            return _sceneVar;
+        }
+
+        protected byte[] PrepareInitialFrame(string sceneVarName)
+        {
+            byte[] magicNumber = new byte[] { 0x49, 0x4E, 0x49, 0x54, 0x46, 0x52, 0x41, 0x4D, 0x45 }; // INITFRAME
+
+            List<byte> data = new List<byte>();
+
+            // Add INITFRAME magic
+            data.AddRange(magicNumber);
+
+            // Add 3 bytes of netcode protocol version
+            data.Add(majorVersion);
+            data.Add(minorVersion);
+            data.Add(patchVersion);
+
+            // Add scene var name in UTF-8, append frame terminator
+            byte[] sceneData = Encoding.UTF8.GetBytes(sceneVarName + "|");
+            data.AddRange(sceneData);
+
+            return data.ToArray();
+        }
+
+        protected void SendInitialRequestFrame(byte[] requestData)
+        {
+            int bytesSent = 0;
+            while (bytesSent < requestData.Length)
+            {
+                int sent = client.Send(requestData, bytesSent, requestData.Length - bytesSent, SocketFlags.None);
+                if (sent == 0)
+                    throw new SocketException();
+                bytesSent += sent;
+            }
+        }
+
+        protected string ReceiveInitialResponseFrame()
+        {
+            StringBuilder responseBuilder = new StringBuilder();
+            byte[] buffer = new byte[64 * 1024];
+            int bytesRead;
+
+            while (true)
+            {
+                bytesRead = client.Receive(buffer);
+                if (bytesRead == 0)
+                    throw new SocketException();
+
+                string chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                responseBuilder.Append(chunk);
+
+                if (chunk.EndsWith("|"))
+                    break;
+            }
+
+            return responseBuilder.ToString().TrimEnd('|');
+        }
+
+        protected void HandleInitialResponseFrame(string response)
+        {
+            SuperController.LogMessage($"Received initial response: {response}");
+        }
+
         protected void ConnectToServerCallback()
         {
             //  Ignore if already connected
@@ -1472,21 +1307,37 @@ Syncing:
                 SuperController.LogMessage(ipHostEntry.AddressList[0].ToString());
                 IPEndPoint ipEndPoint = new IPEndPoint(ipAddress, int.Parse(portChooser.val));
 
-                if (protocolChooser.val == "TCP")
-                {
-                    client = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                    // Set the TCP_NODELAY flag to disable the Nagle Algorithm
-                    client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, true);
+                client = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                // Set the TCP_NODELAY flag to disable the Nagle Algorithm
+                client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, true);
 
-                    // client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                // client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
 
-                    // XXX irrelevant if Blocking is false
-                    client.SendTimeout = 5000;    // 5 seconds timeout for send operations
-                    //client.ReceiveTimeout = 5000; // 5 seconds timeout for receive operations
-                    client.ReceiveTimeout = 5; // 2ms timeout
-                }
+                // XXX irrelevant if Blocking is false
+                client.SendTimeout = 5000;    // 5 seconds timeout for send operations
+                //client.ReceiveTimeout = 5000; // 5 seconds timeout for receive operations
+                client.ReceiveTimeout = 5000;
 
                 client.Connect(ipEndPoint);
+
+                byte[] initialFrame = PrepareInitialFrame(sceneVarName);
+                SuperController.LogMessage("Sending scene name to server: " + sceneVarName);
+                // Send initial request frame containing name of local scene var
+                SendInitialRequestFrame(initialFrame);
+
+                // Receive initial response frame
+                string initialResponse = ReceiveInitialResponseFrame();
+
+                // Handle the initial response
+                HandleInitialResponseFrame(initialResponse);
+
+                // Clear any state from previous connection
+                ClearState();
+
+                SuperController.LogMessage("Connected to server: " + serverChooser.val + ":" + portChooser.val);
+                diagnosticsTextField.text += "Connected to server: " + serverChooser.val + ":" + portChooser.val + "\n";
+                diagnosticsTextField.text += "Got initial frame from server: \n" + initialResponse + "\n";
+
                 // Set as non-blocking from now on
                 client.Blocking = false;
                                 // Make sure socket is writable after connecting
@@ -1501,14 +1352,6 @@ Syncing:
                                         SuperController.LogError("Socket not writable after connect!");
                                     return;
                                 }
-
-                // Clear any state from previous connection
-                ClearState();
-
-                diagnosticsTextField.text += "Connected to server: " + serverChooser.val + ":" + portChooser.val + "\n";
-                //diagnosticsTextField.text += "Connecting..\n";
-
-                SuperController.LogMessage("Connected to server: " + serverChooser.val + ":" + portChooser.val);
 
                 requestMtx = new Mutex();
                 responseMtx = new Mutex();
@@ -1526,6 +1369,7 @@ Syncing:
         {
             // Clear all state except for state that is initialized in Init()
             onlinePlayers.Clear();
+            playerCountTextField.text = "Player count: "; // default value
             sendTimes.Clear();
             lastSentTimestamp = 0;
             averageLatency = 30.0;
@@ -1547,6 +1391,7 @@ Syncing:
             requestGlobal.Length = 0;
             responseGlobal = "";
             lastSentClothesUpdate = "";
+            firstResponseAfterConnecting = true;
         }
         protected void DisconnectFromServerCallback()
         {

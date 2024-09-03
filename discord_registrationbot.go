@@ -174,11 +174,19 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate, allowedChan
 		s.ChannelMessageSend(m.ChannelID, gameStatus)
 	} else if strings.HasPrefix(m.Content, "/monitor") {
 		handleMonitorCommand(s, m)
+		// print state as well
+		gameStatus, err := getCurrentGameStatus()
+		if err != nil {
+			log.Println("Error reading game status: ", err)
+			s.ChannelMessageSend(m.ChannelID, "Error retrieving game status.")
+			return
+		}
+		s.ChannelMessageSend(m.ChannelID, gameStatus)
 	} else {
 		// Respond with detailed usage info for any other message
 		url := "https://www.google.com/search?q=google+what+is+my+ip"
 		text := fmt.Sprintf("Unknown command. Here are the commands you can use:\n\n" +
-		"1. `/register <IP>` - Register your IP address with the VaM multiplayer server via DM to the bot. This will gain you entry to the server with about 24 hour expiration. If you cannot connect to the server in VaM, register again. To find your IP, visit the link below. Link:\n%s\n\n" +
+		"1. `/register <IP>` - Register your IP address with the VaM multiplayer server via DM to the bot. This will gain you entry to the server with 1 week expiration. If you cannot connect to the server in VaM, register again. To find your IP, visit the link below. Link:\n%s\n\n" +
 		    "2. `/state` - Check the current game status to see who is playing. You can also see the same info in my status on Discord updated every 20s.\n\n" +
 		    "3. `/monitor <hours>` - Enable monitoring for game status changes on this channel for X hours (useful for notifications)\n\n" +
 		    "Please use one of the above commands.\n", url)
@@ -240,7 +248,7 @@ func getCurrentGameStatus() (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("%s\n%s\n", statusRoom1, statusRoom2), nil
+	return fmt.Sprintf("%s\n%s\n\n", statusRoom1, statusRoom2), nil
 }
 
 func getRoomStatus(filePath, roomLabel string) (string, error) {
@@ -330,21 +338,58 @@ func getPlayerDetails(state, timestampStr string) (string, error) {
 
 	playerInfo := strings.Split(state, ",")
 	playerDetails := ""
+	sceneNames := make(map[string]int)
+	lastScene := ""
 	for _, info := range playerInfo {
 		playerParts := strings.Split(info, ":")
-		if len(playerParts) == 3 {
+		if len(playerParts) < 3 || len(playerParts) > 4 {
+		    continue // Skip invalid entries
+		}
+		// get username from mapping file based on IP
+		// we want to avoid showing user IPs
+		username, err := getUsernameFromIP(playerParts[0])
+		if err != nil {
+			username = "unknown"
+		}
+		characterName := playerParts[2]
+		sceneName := ""
+		if len(playerParts) == 4 {
+		    sceneName = playerParts[3]
+		    sceneNames[sceneName]++
+		    lastScene = sceneName
+		}
+		if "@SPECTATOR@" == characterName {
+			playerDetails += fmt.Sprintf("%s is SPECTATOR.\n", username)
+		} else {
+			playerDetails += fmt.Sprintf("%s controls %s.\n", username, characterName)
+		}
+		if sceneName != "" {
+		    playerDetails += fmt.Sprintf("%s is on %s\n", username, sceneName)
+		}
+	}
+	// check if all players are on same scene
+	if len(sceneNames) == 1 && sceneNames[lastScene] == len(playerInfo) {
+		// they are - run the same loop again but print scene only at the end (TODO optimize this)
+		playerDetails = ""
+		for _, info := range playerInfo {
+			playerParts := strings.Split(info, ":")
+			if len(playerParts) < 3 || len(playerParts) > 4 {
+			    continue // Skip invalid entries
+			}
 			// get username from mapping file based on IP
 			// we want to avoid showing user IPs
 			username, err := getUsernameFromIP(playerParts[0])
 			if err != nil {
 				username = "unknown"
 			}
-			if "@SPECTATOR@" == playerParts[2] {
+			characterName := playerParts[2]
+			if "@SPECTATOR@" == characterName {
 				playerDetails += fmt.Sprintf("%s is SPECTATOR.\n", username)
 			} else {
-				playerDetails += fmt.Sprintf("%s controls %s.\n", username, playerParts[2])
+				playerDetails += fmt.Sprintf("%s controls %s.\n", username, characterName)
 			}
 		}
+		playerDetails += fmt.Sprintf("Players running scene: %s\n", lastScene)
 	}
 
 	return fmt.Sprintf("%s:\n%s", timestampStr, playerDetails), nil
